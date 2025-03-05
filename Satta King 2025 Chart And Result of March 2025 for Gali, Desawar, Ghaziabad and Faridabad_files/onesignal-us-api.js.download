@@ -1,0 +1,217 @@
+//onesignal-us-api.js?v3.3.3//
+firebase.initializeApp({messagingSenderId: '957123064130',});
+var messaging = firebase.messaging();
+messaging.usePublicVapidKey('BNkJG6jwYSFOE5DsKzVRvXbD0SLlO2cpZFFfynDMqgTEHkgfAlDoPDAOo8ZvXH0fcW226cPEARHSMyRaMgndIHM');
+
+var NOTIFICATION_PROCESS_STATUS = 'nps';
+var NOTIFY_PROMPT_ATTEMPTS = 'npa';
+var MAX_NOTIFY_PROMPT_ATTEMPTS_ALLOWED = 5;
+var NOTIFICATION_TOKEN = 'token';
+var SUBSCRIPTION_ID = 'id';
+var FIRST_TIME_VISITOR = 'ftv';
+var ONCE_POPUP_SHOWN = 'ops';
+
+messaging.onMessage(function(payload){
+    prompt.fire(payload.notification.data.prompt)
+    .then(function(){
+        window.location.href = payload.notification.data.prompt._action.onclick;
+    });
+});
+
+var prompt = Swal.mixin({
+    backdrop: true,
+    position: 'bottom',
+    confirmButtonColor: '#2E7D32',
+    cancelButtonColor: '#F44336',
+});
+
+if ((Cookies.get(FIRST_TIME_VISITOR) === undefined)) {
+    Cookies.set(FIRST_TIME_VISITOR, 'true', { expires: 1 })
+    console.log('we dont ask for notification permission from first time visitor');
+} else {
+    if ((Cookies.get(NOTIFICATION_PROCESS_STATUS) !== undefined) && (Cookies.get(NOTIFICATION_PROCESS_STATUS) !== 'pending')) {
+        console.log('notification process was completed.');
+    } else {
+        if (BrowserSupportPushNotification) {
+            if (Notification.permission === 'denied') {
+                Cookies.set(NOTIFICATION_PROCESS_STATUS, 'permission_denied');
+                console.log('notification permission denied, do not run again');
+            } else 
+            if (Notification.permission === 'granted') {
+                Cookies.set(NOTIFICATION_PROCESS_STATUS, 'pending');
+                console.log('notification permission already granted');
+                SendSubscriptionDataToServer();
+            } else 
+            if (Notification.permission === 'default') {
+                Cookies.set(NOTIFICATION_PROCESS_STATUS, 'permission_default');
+                console.log('notification permission default');
+                ShowPromptForNotificationPermission();
+                Cookies.set(ONCE_POPUP_SHOWN, 'true');
+            } else {
+                Cookies.set(NOTIFICATION_PROCESS_STATUS, 'error: '+ Notification.permission);
+                console.log('cannot ask for permission now.');
+            }
+        } else {
+            Cookies.set(NOTIFICATION_PROCESS_STATUS, 'no_browser_support');
+            console.log('this browser may not support required APIs for push notification');
+        }
+    }
+}
+
+/**
+ * @return {boolean}
+ */
+function BrowserSupportPushNotification() {
+    function LocalStorageSupported (){
+        var mod = 'modernizr';
+        try {
+            localStorage.setItem(mod, mod);
+            localStorage.removeItem(mod);
+            return true;
+        } catch(e) {
+            return false;
+        }
+    }
+    return (LocalStorageSupported() 
+    && ('Notification' in window) 
+    && ('serviceWorker' in navigator) 
+    && ('PushManager' in window));
+}
+
+function ShowPromptForNotificationPermission() {
+    RemoveLastUsedIdAndToken();
+    if (UserAllowedToShowPrompt()) {
+        return prompt.fire({
+            text: 'क्या आप सभी गेम्स की खबर, लीक नंबर, टिप्स, और ट्रिक्स के अपडेट चाहते है?',
+            type: 'info',
+            confirmButtonText:'जी हाँ, जरुर',
+            showCancelButton: true,
+            cancelButtonText:'नहीं, फिर कभी',
+        })
+        .then(function(reply){
+            (reply.value) ? RequestNotificationPermission() : SubscriptionOptout();
+        })
+    } else {
+        Cookies.set(NOTIFICATION_PROCESS_STATUS, 'no_more_prompt_allowed');
+        console.log('user denied too many time on prompt, so we do not ask again.');
+    }
+}
+
+function RequestNotificationPermission() {
+    return new Promise(function(resolve,reject){
+        Notification.requestPermission()
+        .then(function(permission){
+            if(permission === 'granted'){SubscriptionAccept(); resolve(permission);} 
+            else if(permission === 'default'){SubscriptionUnsure();} 
+            else if(permission === 'denied'){SubscriptionReject();}
+            reject(new Error('permission ' + permission));
+        })
+    }).catch(function(e) {
+        console.log(e)
+    })
+}
+
+function RemoveLastUsedIdAndToken() {
+    localStorage.removeItem(NOTIFICATION_TOKEN);
+    localStorage.removeItem(SUBSCRIPTION_ID);
+}
+
+function UserAllowedToShowPrompt() {
+    var notify_prompt_attempts = localStorage.getItem(NOTIFY_PROMPT_ATTEMPTS);
+    (notify_prompt_attempts === null) ?
+        localStorage.setItem(NOTIFY_PROMPT_ATTEMPTS,'1') :
+        localStorage.setItem(NOTIFY_PROMPT_ATTEMPTS, Number(notify_prompt_attempts) + 1);
+    return (Number(notify_prompt_attempts) + 1) <= MAX_NOTIFY_PROMPT_ATTEMPTS_ALLOWED;
+}
+
+function SubscriptionAccept() {
+    Cookies.set(NOTIFICATION_PROCESS_STATUS, 'pending');
+    window.location.href = '/?utm_source=notification&utm_medium=permission&utm_campaign=accept_'
+    + localStorage.getItem(NOTIFY_PROMPT_ATTEMPTS);
+}
+
+function SubscriptionOptout() {
+    window.location.href = '/?utm_source=notification&utm_medium=permission&utm_campaign=optout_' 
+    + localStorage.getItem(NOTIFY_PROMPT_ATTEMPTS);
+}
+
+function SubscriptionReject() {
+    window.location.href = '/?utm_source=notification&utm_medium=permission&utm_campaign=reject_' 
+    + localStorage.getItem(NOTIFY_PROMPT_ATTEMPTS);
+}
+
+function SubscriptionUnsure() {
+    window.location.href = '/?utm_source=notification&utm_medium=permission&utm_campaign=unsure_' 
+    + localStorage.getItem(NOTIFY_PROMPT_ATTEMPTS);
+}
+
+function SubscriptionUpdate() {
+    window.location.href = '/?utm_source=notification&utm_medium=permission&utm_campaign=update';
+}
+
+function CreateVerifiedSubscriberData(token) {
+    return new Promise(function(resolve, reject) {
+        var isSubscriberNew = (localStorage.getItem(NOTIFICATION_TOKEN) === null);
+        if (localStorage.getItem(NOTIFICATION_TOKEN) === token) {
+            Cookies.set(NOTIFICATION_PROCESS_STATUS, 'subscribed');
+            reject('already subscribed, and token is up-to-date');
+        } else {
+            resolve({
+                new: isSubscriberNew,
+                iid: token,
+                atmp: localStorage.getItem(NOTIFY_PROMPT_ATTEMPTS) || '0',
+                host: window.location.hostname,
+                path: window.location.pathname || '/',
+                uaId: navigator.userAgent || 'unknown user agent',
+            });
+        }
+    })
+}
+
+function MakeSubscriptionRequest(client_data) {
+    var url = 'https://us-central1-onesignal-us.cloudfunctions.net/client-app/subscribe';
+    var options =  {
+        method: 'POST', mode: 'cors', cache: 'no-cache',
+        headers: {'Content-Type': 'application/json',},
+        redirect: 'follow',
+        referrer: 'no-referrer',
+        body: JSON.stringify(client_data),
+    };
+    return fetch(url, options);
+}
+
+function SendSubscriptionDataToServer() {
+    var cd_ = null;
+    var sd_ = null;
+    messaging.getToken()
+    .then(function(token) {
+        console.log('your token is: ' + token);
+        return CreateVerifiedSubscriberData(token);
+    }).then(function(client_data) {
+        console.log(client_data);
+        cd_ = client_data;
+        console.log((cd_.new ? 'create' : 'update') +' subscriber, sending request...');
+        Cookies.set(NOTIFICATION_PROCESS_STATUS, 'subscription_sent');
+        return MakeSubscriptionRequest(client_data);
+    }).then(function(response) {
+        console.log('getting server response...');
+        console.log(response);
+        if (response.status === 200) {return response.json();}
+        return Promise.reject(new Error('invalid response status ' + response.status));
+    }).then(function(server_data) {
+        sd_ = server_data;
+        console.log('checking subscriber registration data');
+        if (sd_.id && sd_.iid === cd_.iid) {return server_data;}
+        return Promise.reject(server_data);
+    }).then(function () {
+        localStorage.setItem(NOTIFICATION_TOKEN, sd_.iid);
+        localStorage.setItem(SUBSCRIPTION_ID, sd_.id);
+        localStorage.removeItem(NOTIFY_PROMPT_ATTEMPTS);
+        Cookies.set(NOTIFICATION_PROCESS_STATUS, 'subscribed');
+        console.log('subscriber '+ (cd_.new ? 'created' : 'updated') +' successfully.');
+        if (!cd_.new) {SubscriptionUpdate();}
+        return cd_;
+    }).catch(function(error) {
+        console.log(error);
+    });
+}
